@@ -4,8 +4,5 @@ pillow==10.4.0
 numpy==1.26.4
 pandas==2.2.2
 
-supabase==1.0.3
-gotrue==1.0.2
-postgrest==0.13.0
-realtime==0.2.0
-storage3==0.5.2
+supabase-py==0.0.0.post8
+requests==2.32.3
