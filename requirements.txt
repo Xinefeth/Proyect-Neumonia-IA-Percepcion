@@ -1,8 +1,5 @@
-streamlit==1.39.0
-tensorflow-cpu==2.17.0
-pillow==10.4.0
-numpy==1.26.4
-pandas==2.2.2
-
-supabase-py==0.0.0.post8
-requests==2.32.3
+streamlit>=1.28.0
+tensorflow>=2.15.0
+numpy>=1.24.0
+pillow>=10.0.0
+pandas>=2.0.0
