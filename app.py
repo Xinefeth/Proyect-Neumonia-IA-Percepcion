@@ -6,7 +6,6 @@ from tensorflow.keras.applications import efficientnet_v2
 from PIL import Image, ImageOps
 from datetime import datetime
 import pandas as pd
-from supabase import create_client, Client
 
 # Configuración de página
 st.set_page_config(
@@ -22,10 +21,6 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "best_effnetv2.keras")
 IMG_SIZE = (224, 224)
 CLASS_NAMES = ["NORMAL", "PNEUMONIA"]
-
-# Configuración de Supabase
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # CSS personalizado
 st.markdown("""
@@ -66,6 +61,7 @@ st.markdown("""
 @st.cache_resource
 def load_model():
     """Carga el modelo de manera eficiente con cache"""
+    # Si el modelo no existe localmente, intentar descargarlo
     if not os.path.exists(MODEL_PATH):
         st.warning("⚠️ Modelo no encontrado localmente. Verificando repositorio...")
         st.error(f"❌ Modelo no encontrado en: {MODEL_PATH}")
@@ -80,57 +76,6 @@ def load_model():
         except Exception as e:
             st.error(f"Error al cargar el modelo: {str(e)}")
             st.stop()
-
-# Inicializar cliente de Supabase
-@st.cache_resource
-def init_supabase():
-    """Inicializa la conexión con Supabase"""
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("❌ Credenciales de Supabase no configuradas")
-        st.info("Configura SUPABASE_URL y SUPABASE_KEY en las variables de entorno")
-        return None
-    
-    try:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        return supabase
-    except Exception as e:
-        st.error(f"Error al conectar con Supabase: {str(e)}")
-        return None
-
-def save_to_supabase(supabase, record):
-    """Guarda un registro en Supabase"""
-    try:
-        data = supabase.table("analysis_history").insert(record).execute()
-        return True
-    except Exception as e:
-        st.error(f"Error al guardar en Supabase: {str(e)}")
-        return False
-
-def load_from_supabase(supabase, limit=50):
-    """Carga el historial desde Supabase"""
-    try:
-        response = supabase.table("analysis_history")\
-            .select("*")\
-            .order("created_at", desc=True)\
-            .limit(limit)\
-            .execute()
-        return response.data
-    except Exception as e:
-        st.error(f"Error al cargar desde Supabase: {str(e)}")
-        return []
-
-def delete_all_history(supabase):
-    """Elimina todo el historial de Supabase"""
-    try:
-        # Primero obtener todos los IDs
-        response = supabase.table("analysis_history").select("id").execute()
-        if response.data:
-            # Eliminar todos los registros
-            supabase.table("analysis_history").delete().neq("id", 0).execute()
-        return True
-    except Exception as e:
-        st.error(f"Error al eliminar historial: {str(e)}")
-        return False
 
 def preprocess_image(pil_img, target_size=IMG_SIZE):
     """Preprocesa la imagen para el modelo"""
@@ -154,20 +99,16 @@ def predict_image(model, pil_img):
     idx = int(np.argmax(probs))
     return CLASS_NAMES[idx], float(probs[idx]), probs
 
-# Inicializar Supabase y modelo
-supabase = init_supabase()
-model = load_model()
+# Inicializar session_state para historial
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
 # Header
 st.markdown('<p class="main-header">🩺 Detector de Neumonía por Rayos X</p>', unsafe_allow_html=True)
-
-# Mostrar estado de conexión
-if supabase:
-    st.success("✅ Conectado a Supabase - Persistencia activada")
-else:
-    st.warning("⚠️ Sin conexión a Supabase - Los datos no se guardarán")
-
 st.markdown("---")
+
+# Cargar modelo
+model = load_model()
 
 # Sidebar
 with st.sidebar:
@@ -204,23 +145,17 @@ with col1:
             with st.spinner("Analizando..."):
                 label, prob, all_probs = predict_image(model, image)
                 
-                # Crear registro
+                # Guardar en historial
                 record = {
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "patient_name": patient_name or "Sin nombre",
                     "document_id": document_id or "N/A",
-                    "age": str(age) if age > 0 else "N/A",
+                    "age": age if age > 0 else "N/A",
                     "notes": notes or "Sin notas",
                     "prediction": label,
-                    "confidence": float(prob)
+                    "confidence": prob
                 }
-                
-                # Guardar en Supabase
-                if supabase:
-                    if save_to_supabase(supabase, record):
-                        st.success("💾 Análisis guardado correctamente")
-                    else:
-                        st.warning("⚠️ No se pudo guardar el análisis")
+                st.session_state.history.insert(0, record)
                 
                 # Mostrar resultado en col2
                 with col2:
@@ -277,73 +212,39 @@ with col2:
 st.markdown("---")
 st.subheader("📜 Historial de Análisis")
 
-if supabase:
-    # Cargar historial desde Supabase
-    history_data = load_from_supabase(supabase)
+if st.session_state.history:
+    # Botón para limpiar historial
+    if st.button("🗑️ Limpiar Historial"):
+        st.session_state.history = []
+        st.rerun()
     
-    if history_data:
-        # Botón para limpiar historial
-        col_btn1, col_btn2 = st.columns([1, 5])
-        with col_btn1:
-            if st.button("🗑️ Limpiar Todo"):
-                if delete_all_history(supabase):
-                    st.success("✅ Historial eliminado")
-                    st.rerun()
-        
-        with col_btn2:
-            if st.button("🔄 Recargar"):
-                st.rerun()
-        
-        # Mostrar historial como tabla
-        df = pd.DataFrame(history_data)
-        
-        # Seleccionar y reordenar columnas
-        display_columns = ['timestamp', 'patient_name', 'document_id', 'age', 
-                          'prediction', 'confidence', 'notes']
-        df_display = df[display_columns].copy()
-        
-        # Formatear confianza como porcentaje
-        df_display['confidence'] = df_display['confidence'].apply(lambda x: f"{x*100:.2f}%")
-        
-        st.dataframe(
-            df_display,
-            hide_index=True,
-            column_config={
-                "timestamp": "Fecha/Hora",
-                "patient_name": "Paciente",
-                "document_id": "Documento",
-                "age": "Edad",
-                "prediction": "Diagnóstico",
-                "confidence": "Confianza",
-                "notes": "Notas"
-            },
-            use_container_width=True
-        )
-        
-        # Estadísticas
-        st.markdown("### 📊 Estadísticas")
-        stat_col1, stat_col2, stat_col3 = st.columns(3)
-        
-        with stat_col1:
-            total = len(df)
-            st.metric("Total de Análisis", total)
-        
-        with stat_col2:
-            normal_count = len(df[df['prediction'] == 'NORMAL'])
-            st.metric("Casos Normales", normal_count)
-        
-        with stat_col3:
-            pneumonia_count = len(df[df['prediction'] == 'PNEUMONIA'])
-            st.metric("Casos de Neumonía", pneumonia_count)
-    else:
-        st.info("No hay análisis previos. Los resultados aparecerán aquí después de analizar radiografías.")
+    # Mostrar historial como tabla
+    df = pd.DataFrame(st.session_state.history)
+    
+    # Formatear confianza como porcentaje
+    df_display = df.copy()
+    df_display['confidence'] = df_display['confidence'].apply(lambda x: f"{x*100:.2f}%")
+    
+    st.dataframe(
+        df_display,
+        hide_index=True,
+        column_config={
+            "timestamp": "Fecha/Hora",
+            "patient_name": "Paciente",
+            "document_id": "Documento",
+            "age": "Edad",
+            "prediction": "Diagnóstico",
+            "confidence": "Confianza",
+            "notes": "Notas"
+        }
+    )
 else:
-    st.warning("⚠️ No se puede mostrar el historial sin conexión a Supabase")
+    st.info("No hay análisis previos. Los resultados aparecerán aquí después de analizar radiografías.")
 
 # Footer
 st.markdown("---")
 st.markdown(
     "<p style='text-align: center; color: gray;'>🩺 Sistema de Detección de Neumonía | "
-    "Desarrollado con Streamlit & TensorFlow | Persistencia con Supabase</p>",
+    "Desarrollado con Streamlit & TensorFlow</p>",
     unsafe_allow_html=True
 )
