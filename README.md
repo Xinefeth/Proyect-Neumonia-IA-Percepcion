@@ -79,7 +79,7 @@ El modelo fue entrenado en **Google Colab** usando **EfficientNetV2B0** con las 
    cd  proyecto-neumonia
    code .
 
-2. Clonar el repositorio:  
+2. Crear un entorno:  
    ```powershell
     python -m venv .venv
 
